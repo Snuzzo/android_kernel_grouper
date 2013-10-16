@@ -542,6 +542,10 @@ static int tegra_max98095_init(struct snd_soc_pcm_runtime *rtd)
 		tegra_max98095_hp_jack_pins);
 #endif
 
+	ret = tegra_asoc_utils_register_ctls(&machine->util_data);
+	if (ret < 0)
+		return ret;
+
 	/* max98095_headset_detect(codec, &tegra_max98095_hp_jack,
 		SND_JACK_HEADSET); */
 
@@ -630,7 +634,7 @@ static __devinit int tegra_max98095_driver_probe(struct platform_device *pdev)
 
 	machine->pdata = pdata;
 
-	ret = tegra_asoc_utils_init(&machine->util_data, &pdev->dev);
+	ret = tegra_asoc_utils_init(&machine->util_data, &pdev->dev, card);
 	if (ret)
 		goto err_free_machine;
 

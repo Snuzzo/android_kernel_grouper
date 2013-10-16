@@ -164,4 +164,4 @@ static int tegra_init_apb_dma(void)
 #endif
 	return 0;
 }
-subsys_initcall(tegra_init_apb_dma);
+arch_initcall(tegra_init_apb_dma);

@@ -40,9 +40,6 @@
 
 #define CAM1_LDO_EN_GPIO		TEGRA_GPIO_PR6
 #define FRONT_YUV_SENSOR_RST_GPIO	TEGRA_GPIO_PO0
-#define FRONT_YUV_SENSOR_RST_GPIO_BACH	TEGRA_GPIO_PBB0
-
-static int front_yuv_sensor_rst_gpio = FRONT_YUV_SENSOR_RST_GPIO;
 
 static struct regulator *grouper_1v8_ldo5;
 static struct regulator *grouper_1v8_cam3;
@@ -57,20 +54,8 @@ static const struct i2c_board_info cardhu_i2c1_board_info_al3010[] = {
 	},
 };
 
-static const struct i2c_board_info cap1106_i2c1_board_info[] = {
-    {
-        I2C_BOARD_INFO("cap1106",0x28),
-        .irq = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PR3),
-    },
-};
-
 static int grouper_camera_init(void)
 {
-	u32 project_info = grouper_get_project_id();
-
-	if (project_info == GROUPER_PROJECT_BACH)
-		front_yuv_sensor_rst_gpio = FRONT_YUV_SENSOR_RST_GPIO_BACH;
-
 	pmic_id = grouper_query_pmic_id();
 	printk("%s: pmic_id= 0x%X", __FUNCTION__, pmic_id);
 #if 0
@@ -173,26 +158,6 @@ static int yuv_front_sensor_power_on(void)
 	int ret;
 	printk("yuv_front_sensor_power_on+\n");
 
-	if (!grouper_1v8_ldo5) {
-		if(pmic_id == GROUPER_PMIC_MAXIM) {
-			grouper_1v8_ldo5 = regulator_get(NULL, "vdd_sensor_1v8");
-		} else if (pmic_id == GROUPER_PMIC_TI) {
-			grouper_1v8_ldo5 = regulator_get(NULL, "avdd_vdac");
-		}
-		if (IS_ERR_OR_NULL(grouper_1v8_ldo5)) {
-			if (grouper_1v8_ldo5) {
-				regulator_put(grouper_1v8_ldo5);
-			}
-			grouper_1v8_ldo5 = NULL;
-			pr_err("%s-: Can't get grouper_1v8_ldo5.\n", __func__);
-			return -ENODEV;
-		}
-		regulator_set_voltage(grouper_1v8_ldo5, 1800000, 1800000);
-		regulator_enable(grouper_1v8_ldo5);
-	}
-
-	msleep(10);
-
 	/* AVDD_CAM1, 2.85V, controlled by CAM1_LDO_EN */
 	pr_info("gpio %d read as %d\n",CAM1_LDO_EN_GPIO, gpio_get_value(CAM1_LDO_EN_GPIO));
 	tegra_gpio_enable(CAM1_LDO_EN_GPIO);
@@ -205,24 +170,52 @@ static int yuv_front_sensor_power_on(void)
 	gpio_direction_output(CAM1_LDO_EN_GPIO, 1);
 	pr_info("--> %d\n", gpio_get_value(CAM1_LDO_EN_GPIO));
 
+	msleep(5);
+
+	if (!grouper_1v8_ldo5) {
+		if(pmic_id == GROUPER_PMIC_MAXIM) {
+			grouper_1v8_ldo5 = regulator_get(NULL, "vdd_sensor_1v8");
+		} else if (pmic_id == GROUPER_PMIC_TI) {
+			grouper_1v8_ldo5 = regulator_get(NULL, "avdd_vdac");
+		}
+		if (IS_ERR_OR_NULL(grouper_1v8_ldo5)) {
+			grouper_1v8_ldo5 = NULL;
+			pr_err("Can't get grouper_1v8_ldo5.\n");
+			goto fail_to_get_reg;
+		}
+		regulator_set_voltage(grouper_1v8_ldo5, 1800000, 1800000);
+		regulator_enable(grouper_1v8_ldo5);
+	}
+
 	tegra_pinmux_set_tristate(TEGRA_PINGROUP_CAM_MCLK, TEGRA_TRI_NORMAL);
 
-	msleep(10);
-
 	/* yuv_sensor_rst_lo*/
-	tegra_gpio_enable(front_yuv_sensor_rst_gpio);
-	ret = gpio_request(front_yuv_sensor_rst_gpio, "yuv_sensor_rst_lo");
+	tegra_gpio_enable(FRONT_YUV_SENSOR_RST_GPIO);
+	ret = gpio_request(FRONT_YUV_SENSOR_RST_GPIO, "yuv_sensor_rst_lo");
 
 	if (ret < 0)
 		pr_err("%s: gpio_request failed for gpio %s, ret= %d\n",
 			__func__, "FRONT_YUV_SENSOR_RST_GPIO", ret);
-	pr_info("gpio %d: %d", front_yuv_sensor_rst_gpio, gpio_get_value(front_yuv_sensor_rst_gpio));
-	gpio_set_value(front_yuv_sensor_rst_gpio, 1);
-	gpio_direction_output(front_yuv_sensor_rst_gpio, 1);
-	pr_info("--> %d\n", gpio_get_value(front_yuv_sensor_rst_gpio));
+	pr_info("gpio %d: %d", FRONT_YUV_SENSOR_RST_GPIO, gpio_get_value(FRONT_YUV_SENSOR_RST_GPIO));
+	gpio_set_value(FRONT_YUV_SENSOR_RST_GPIO, 1);
+	gpio_direction_output(FRONT_YUV_SENSOR_RST_GPIO, 1);
+	pr_info("--> %d\n", gpio_get_value(FRONT_YUV_SENSOR_RST_GPIO));
 
 	printk("yuv_front_sensor_power_on-\n");
 	return 0;
+
+fail_to_get_reg:
+	if (grouper_1v8_ldo5) {
+		regulator_put(grouper_1v8_ldo5);
+		grouper_1v8_ldo5 = NULL;
+	}
+
+	gpio_set_value(CAM1_LDO_EN_GPIO, 0);
+	gpio_direction_output(CAM1_LDO_EN_GPIO, 0);
+	gpio_free(CAM1_LDO_EN_GPIO);
+
+	printk("yuv_front_sensor_power_on- : -ENODEV\n");
+	return -ENODEV;
 }
 
 static int yuv_front_sensor_power_off(void)
@@ -230,25 +223,23 @@ static int yuv_front_sensor_power_off(void)
 	printk("%s+\n", __FUNCTION__);
 
 	if((pmic_id == GROUPER_PMIC_MAXIM) || (pmic_id == GROUPER_PMIC_TI)) {
-		gpio_set_value(front_yuv_sensor_rst_gpio, 0);
-		gpio_direction_output(front_yuv_sensor_rst_gpio, 0);
-		gpio_free(front_yuv_sensor_rst_gpio);
-
-		msleep(10);
+		gpio_set_value(FRONT_YUV_SENSOR_RST_GPIO, 0);
+		gpio_direction_output(FRONT_YUV_SENSOR_RST_GPIO, 0);
+		gpio_free(FRONT_YUV_SENSOR_RST_GPIO);
 
 		tegra_pinmux_set_tristate(TEGRA_PINGROUP_CAM_MCLK, TEGRA_TRI_TRISTATE);
-
-		gpio_set_value(CAM1_LDO_EN_GPIO, 0);
-		gpio_direction_output(CAM1_LDO_EN_GPIO, 0);
-		gpio_free(CAM1_LDO_EN_GPIO);
-
-		msleep(10);
 
 		if (grouper_1v8_ldo5) {
 			regulator_disable(grouper_1v8_ldo5);
 			regulator_put(grouper_1v8_ldo5);
 			grouper_1v8_ldo5 = NULL;
 		}
+
+		msleep(5);
+
+		gpio_set_value(CAM1_LDO_EN_GPIO, 0);
+		gpio_direction_output(CAM1_LDO_EN_GPIO, 0);
+		gpio_free(CAM1_LDO_EN_GPIO);
 
 		printk("%s-\n", __FUNCTION__);
 		return 0;
@@ -471,11 +462,6 @@ int __init grouper_sensors_init(void)
 
 	i2c_register_board_info(2, cardhu_i2c1_board_info_al3010,
 		ARRAY_SIZE(cardhu_i2c1_board_info_al3010));
-
-    if (GROUPER_PROJECT_BACH == grouper_get_project_id()) {
-        i2c_register_board_info(2, cap1106_i2c1_board_info,
-                ARRAY_SIZE(cap1106_i2c1_board_info));
-    }
 
 	return 0;
 }

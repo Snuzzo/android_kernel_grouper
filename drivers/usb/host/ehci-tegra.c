@@ -23,7 +23,6 @@
 #include <linux/usb/otg.h>
 #include <mach/usb_phy.h>
 #include <mach/iomap.h>
-#include <mach/board-grouper-misc.h>
 
 #define TEGRA_USB_PORTSC_PHCD		(1 << 23)
 
@@ -57,9 +56,6 @@
 #define USB2_PREFETCH_ID               18
 #define USB3_PREFETCH_ID               17
 
-extern void baseband_xmm_L3_resume_check(void);
-static struct usb_hcd *modem_ehci_handle;
-
 struct tegra_ehci_hcd {
 	struct ehci_hcd *ehci;
 	struct tegra_usb_phy *phy;
@@ -81,13 +77,6 @@ struct tegra_ehci_hcd {
 	unsigned int irq;
 	bool bus_suspended_fail;
 };
-
-int use_hsic_controller(struct usb_hcd *hcd)
-{
-	struct tegra_ehci_hcd *tegra = dev_get_drvdata(hcd->self.controller);
-	return (tegra->phy->usb_phy_type == TEGRA_USB_PHY_TYPE_HSIC);
-}
-EXPORT_SYMBOL(use_hsic_controller);
 
 static void tegra_ehci_power_up(struct usb_hcd *hcd, bool is_dpd)
 {
@@ -228,7 +217,7 @@ static irqreturn_t tegra_ehci_irq (struct usb_hcd *hcd)
 
 	irq_status = ehci_irq(hcd);
 
-	if (pmc_remote_wakeup || tegra->phy->usb_phy_type == TEGRA_USB_PHY_TYPE_HSIC) {
+	if (pmc_remote_wakeup) {
 		ehci->controller_remote_wakeup = false;
 	}
 
@@ -776,18 +765,6 @@ static void tegra_ehci_disable_phy_interrupt(struct usb_hcd *hcd) {
 	}
 }
 
-void tegra_usb_suspend_hsic(void)
-{
-	tegra_usb_suspend(modem_ehci_handle ,false);
-}
-EXPORT_SYMBOL(tegra_usb_suspend_hsic);
-
-void tegra_usb_resume_hsic(void)
-{
-	tegra_usb_resume(modem_ehci_handle ,false);
-}
-EXPORT_SYMBOL(tegra_usb_resume_hsic);
-
 static void tegra_ehci_shutdown(struct usb_hcd *hcd)
 {
 	struct tegra_ehci_hcd *tegra = dev_get_drvdata(hcd->self.controller);
@@ -1241,10 +1218,6 @@ static int tegra_ehci_probe(struct platform_device *pdev)
 		tegra->irq = 0;
 	}
 
-	if (instance == 1) {
-		modem_ehci_handle = hcd;
-	}
-
 	return err;
 
 fail:
@@ -1280,10 +1253,6 @@ static int tegra_ehci_resume(struct platform_device *pdev)
 	struct tegra_ehci_hcd *tegra = platform_get_drvdata(pdev);
 	struct usb_hcd *hcd = ehci_to_hcd(tegra->ehci);
 	int ret;
-	u32 project_info = grouper_get_project_id();
-
-	if (project_info == GROUPER_PROJECT_NAKASI_3G)
-		baseband_xmm_L3_resume_check();
 
 	mutex_lock(&tegra->tegra_ehci_hcd_mutex);
 	if ((tegra->bus_suspended) && (tegra->power_down_on_bus_suspend)) {
@@ -1359,9 +1328,6 @@ static int tegra_ehci_remove(struct platform_device *pdev)
 		otg_put_transceiver(tegra->transceiver);
 	}
 #endif
-	if (tegra->phy->instance == 1) {
-		modem_ehci_handle = NULL;
-	}
 
 	/* Turn Off Interrupts */
 	ehci_writel(tegra->ehci, 0, &tegra->ehci->regs->intr_enable);

@@ -27,6 +27,8 @@
 #define TEGRA_EMC_BRIDGE_RATE_MIN	300000000
 #define TEGRA_EMC_BRIDGE_MVOLTS_MIN	1200
 
+extern u8 tegra_emc_bw_efficiency;
+
 struct tegra_emc_table {
 	u8 rev;
 	unsigned long rate;
@@ -52,7 +54,7 @@ enum {
 
 struct clk;
 
-void tegra_init_emc(const struct tegra_emc_table *table, int table_size);
+int tegra_init_emc(const struct tegra_emc_table *table, int table_size);
 
 void tegra_init_dram_bit_map(const u32 *bit_map, int map_size);
 void tegra_emc_dram_type_init(struct clk *c);

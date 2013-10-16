@@ -45,6 +45,8 @@ static bool emc_enable;
 #endif
 module_param(emc_enable, bool, 0644);
 
+u8 tegra_emc_bw_efficiency = 35;
+
 #define EMC_MIN_RATE_DDR3		25500000
 #define EMC_STATUS_UPDATE_TIMEOUT	100
 #define TEGRA_EMC_TABLE_MAX_SIZE 	16
@@ -935,7 +937,7 @@ static struct notifier_block tegra_emc_resume_nb = {
 	.priority = -1,
 };
 
-void tegra_init_emc(const struct tegra_emc_table *table, int table_size)
+int tegra_init_emc(const struct tegra_emc_table *table, int table_size)
 {
 	int i, mv;
 	u32 reg, div_value;
@@ -953,18 +955,18 @@ void tegra_init_emc(const struct tegra_emc_table *table, int table_size)
 
 	if ((dram_type != DRAM_TYPE_DDR3) && (dram_type != DRAM_TYPE_LPDDR2)) {
 		pr_err("tegra: not supported DRAM type %u\n", dram_type);
-		return;
+		return 0;
 	}
 
 	if (emc->parent != tegra_get_clock_by_name("pll_m")) {
 		pr_err("tegra: boot parent %s is not supported by EMC DFS\n",
 			emc->parent->name);
-		return;
+		return 0;
 	}
 
 	if (!table || !table_size) {
 		pr_err("tegra: EMC DFS table is empty\n");
-		return;
+		return 0;
 	}
 
 	tegra_emc_table_size = min(table_size, TEGRA_EMC_TABLE_MAX_SIZE);
@@ -980,7 +982,7 @@ void tegra_init_emc(const struct tegra_emc_table *table, int table_size)
 	default:
 		pr_err("tegra: invalid EMC DFS table: unknown rev 0x%x\n",
 			table[0].rev);
-		return;
+		return 0;
 	}
 
 	/* Match EMC source/divider settings with table entries */
@@ -1021,7 +1023,7 @@ void tegra_init_emc(const struct tegra_emc_table *table, int table_size)
 	if (!max_entry) {
 		pr_err("tegra: invalid EMC DFS table: entry for max rate"
 		       " %lu kHz is not found\n", max_rate);
-		return;
+		return 0;
 	}
 
 	tegra_emc_table = table;
@@ -1033,13 +1035,13 @@ void tegra_init_emc(const struct tegra_emc_table *table, int table_size)
 		pr_err("tegra: invalid EMC DFS table: maximum rate %lu kHz does"
 		       " not match nominal voltage %d\n",
 		       max_rate, emc->dvfs->max_millivolts);
-		return;
+		return 0;
 	}
 
 	if (!is_emc_bridge()) {
 		tegra_emc_table = NULL;
 		pr_err("tegra: invalid EMC DFS table: emc bridge not found");
-		return;
+		return 0;
 	}
 	pr_info("tegra: validated EMC DFS table\n");
 
@@ -1052,7 +1054,7 @@ void tegra_init_emc(const struct tegra_emc_table *table, int table_size)
 	register_pm_notifier(&tegra_emc_suspend_nb);
 	register_pm_notifier(&tegra_emc_resume_nb);
 
-	return;
+	return 1;
 }
 
 void tegra_emc_timing_invalidate(void)
@@ -1273,6 +1275,22 @@ static int eack_state_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(eack_state_fops, eack_state_get,
 			eack_state_set, "%llu\n");
 
+static int efficiency_get(void *data, u64 *val)
+{
+	*val = tegra_emc_bw_efficiency;
+	return 0;
+}
+static int efficiency_set(void *data, u64 val)
+{
+	tegra_emc_bw_efficiency = (val > 100) ? 100 : val;
+	if (emc)
+		tegra_clk_shared_bus_update(emc);
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(efficiency_fops, efficiency_get,
+			efficiency_set, "%llu\n");
+
 static int __init tegra_emc_debug_init(void)
 {
 	if (!tegra_emc_table)
@@ -1296,6 +1314,10 @@ static int __init tegra_emc_debug_init(void)
 
 	if (!debugfs_create_file(
 		"eack_state", S_IRUGO | S_IWUSR, emc_debugfs_root, NULL, &eack_state_fops))
+		goto err_out;
+
+	if (!debugfs_create_file("efficiency", S_IRUGO | S_IWUSR,
+				 emc_debugfs_root, NULL, &efficiency_fops))
 		goto err_out;
 
 	return 0;

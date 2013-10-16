@@ -46,9 +46,6 @@
 #include <linux/user_namespace.h>
 
 #include <linux/kmsg_dump.h>
-#include <linux/gpio.h>
-#include "../arch/arm/mach-tegra/gpio-names.h"
-
 /* Move somewhere else to avoid recompiling? */
 #include <generated/utsrelease.h>
 
@@ -125,7 +122,10 @@ EXPORT_SYMBOL(cad_pid);
 
 void (*pm_power_off_prepare)(void);
 
- extern void disable_auto_hotplug(void);
+#ifndef CONFIG_CPUQUIET_FRAMEWORK
+extern void disable_auto_hotplug(void);
+#endif
+
 /*
  * Returns true if current's euid is same as p's uid or euid,
  * or has CAP_SYS_NICE to p's user_ns.
@@ -367,7 +367,9 @@ EXPORT_SYMBOL(unregister_reboot_notifier);
  */
 void kernel_restart(char *cmd)
 {
+#ifndef CONFIG_CPUQUIET_FRAMEWORK
 	disable_auto_hotplug();
+#endif
 	kernel_restart_prepare(cmd);
 	if (!cmd)
 		printk(KERN_EMERG "Restarting system.\n");
@@ -411,14 +413,16 @@ EXPORT_SYMBOL_GPL(kernel_halt);
 extern unsigned battery_cable_status;
 void kernel_power_off(void)
 {
-	 if ((battery_cable_status)||(!gpio_get_value(TEGRA_GPIO_PV1))) {
+	 if (battery_cable_status) {
 		char cmd[] = "chrager-mode";
 
 		printk(KERN_EMERG "kernel_power_off: go to charger mode!");
 		kernel_restart(cmd);
 	 }
 
+#ifndef CONFIG_CPUQUIET_FRAMEWORK
 	disable_auto_hotplug();
+#endif
 	kernel_shutdown_prepare(SYSTEM_POWER_OFF);
 	if (pm_power_off_prepare)
 		pm_power_off_prepare();
@@ -655,6 +659,7 @@ static int set_user(struct cred *new)
 
 	free_uid(new->user);
 	new->user = new_user;
+	sched_autogroup_create_attach(current);
 	return 0;
 }
 
@@ -1164,7 +1169,7 @@ out:
 	write_unlock_irq(&tasklist_lock);
 	if (err > 0) {
 		proc_sid_connector(group_leader);
-		sched_autogroup_create_attach(group_leader);
+		
 	}
 	return err;
 }
@@ -1184,16 +1189,15 @@ DECLARE_RWSEM(uts_sem);
  * Work around broken programs that cannot handle "Linux 3.0".
  * Instead we map 3.x to 2.6.40+x, so e.g. 3.0 would be 2.6.40
  */
-static int override_release(char __user *release, size_t len)
+static int override_release(char __user *release, int len)
 {
 	int ret = 0;
+	char buf[65];
 
 	if (current->personality & UNAME26) {
-		const char *rest = UTS_RELEASE;
-		char buf[65] = { 0 };
+		char *rest = UTS_RELEASE;
 		int ndots = 0;
 		unsigned v;
-		size_t copy;
 
 		while (*rest) {
 			if (*rest == '.' && ++ndots >= 3)
@@ -1203,9 +1207,8 @@ static int override_release(char __user *release, size_t len)
 			rest++;
 		}
 		v = ((LINUX_VERSION_CODE >> 8) & 0xff) + 40;
-		copy = clamp_t(size_t, len, 1, sizeof(buf));
-		copy = scnprintf(buf, copy, "2.6.%u%s", v, rest);
-		ret = copy_to_user(release, buf, copy + 1);
+		snprintf(buf, len, "2.6.%u%s", v, rest);
+		ret = copy_to_user(release, buf, len);
 	}
 	return ret;
 }
